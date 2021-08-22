@@ -84,6 +84,8 @@ PG_RESET_TEMPLATE(governorConfig_t, governorConfig,
     .gov_i_gain = 20,
     .gov_d_gain = 0,
     .gov_f_gain = 0,
+    .gov_tta_gain = 0,
+    .gov_tta_limit = 20,
     .gov_cyclic_ff_weight = 40,
     .gov_collective_ff_weight = 100,
     .gov_ff_exponent = 150,
@@ -145,14 +147,16 @@ static FAST_RAM_ZERO_INIT float govKp;
 static FAST_RAM_ZERO_INIT float govKi;
 static FAST_RAM_ZERO_INIT float govKd;
 static FAST_RAM_ZERO_INIT float govKf;
+static FAST_RAM_ZERO_INIT float govKt;
 
 static FAST_RAM_ZERO_INIT float govP;
 static FAST_RAM_ZERO_INIT float govI;
 static FAST_RAM_ZERO_INIT float govC;
 static FAST_RAM_ZERO_INIT float govD;
 static FAST_RAM_ZERO_INIT float govF;
-static FAST_RAM_ZERO_INIT float govPidSum;
+static FAST_RAM_ZERO_INIT float govT;
 static FAST_RAM_ZERO_INIT float govError;
+static FAST_RAM_ZERO_INIT float govPidSum;
 
 static FAST_RAM_ZERO_INIT float govCycWeight;
 static FAST_RAM_ZERO_INIT float govColWeight;
@@ -161,6 +165,8 @@ static FAST_RAM_ZERO_INIT float govCyclicFF;
 static FAST_RAM_ZERO_INIT float govCollectiveFF;
 static FAST_RAM_ZERO_INIT float govFeedForward;
 static FAST_RAM_ZERO_INIT float govFFexponent;
+
+static FAST_RAM_ZERO_INIT float govTTALimit;
 
 static FAST_RAM_ZERO_INIT float govBatOffset;
 
@@ -353,7 +359,16 @@ static void govUpdateData(void)
     // Normalized RPM error
     float newError = (govSetpoint - govHeadSpeed) / govMaxHeadSpeed;
 
-    // Update PIDF terms
+    // Tail Torque Assist
+    govT = constrainf(-govKt * mixerGetInput(MIXER_IN_STABILIZED_YAW), 0, govTTALimit);
+
+    // MASSIVE HACK WARNING - THIS SHOULDN'T BE HERE
+    if (govMode == GM_MODE4) {
+        float ttaSetpoint = govSetpoint * (govT + 1.0f);
+        newError = (ttaSetpoint - govHeadSpeed) / govMaxHeadSpeed;
+    }
+
+    // Update PID terms
     govP = govK * govKp * newError;
     govC = govK * govKi * newError * pidGetDT();
     govD = govK * govKd * (newError - govError) / pidGetDT();
@@ -840,6 +855,75 @@ static inline float govCalcRate(uint16_t param, uint16_t min, uint16_t max)
 }
 
 
+/*
+ * Mode3: Mode2 + Tail Torque Assist (TTA)
+ */
+
+static void govMode3Init(void)
+{
+    // Normalized battery voltage
+    float pidGain = govNominalVoltage / (govVoltage - govBatOffset);
+
+    // Expected PID output
+    float pidTarget = govOutput / pidGain;
+
+    // PID limits
+    govP = constrainf(govP, -0.25f, 0.25f);
+    govD = constrainf(govD, -0.25f, 0.25f);
+    govF = constrainf(govF,      0, 0.25f);
+
+    // Use govI to reach the target
+    govI = pidTarget - (govP + govD + govF);
+
+    // Realistic bounds
+    govI = constrainf(govI, 0, 0.95f);
+}
+
+static float govMode3Control(void)
+{
+    float output;
+
+    // Normalized battery voltage
+    float pidGain = govNominalVoltage / (govVoltage - govBatOffset);
+
+    // PID limits
+    govP = constrainf(govP, -0.25f, 0.25f);
+    govI = constrainf(govI,      0, 0.95f);
+    govD = constrainf(govD, -0.25f, 0.25f);
+    govF = constrainf(govF,      0, 0.25f);
+
+    // Limited PID effect if TTA active
+    if (govT > 0 && govError < 0) {
+        govP = 0;
+        govC = 0;
+        govD = 0;
+    }
+
+    // Recovering from TTA - prevent windup
+    if (govError < -0.05f) {
+        govC = 0;
+    }
+
+    // Absolute limits for assistance
+    govT = constrainf(govT, 0, govTTALimit);
+
+    // Governor PID/F sum
+    govPidSum = govP + govI + govC + govD + govF + govI*govT;
+
+    // Generate throttle signal
+    output = govPidSum * pidGain;
+
+    // Apply govC if output not saturated
+    if (!((output > 1 && govC > 0) || (output < GOV_MIN_THROTTLE_OUTPUT && govC < 0)))
+        govI += govC;
+
+    // Limit output to 10%..100%
+    output = constrainf(output, GOV_MIN_THROTTLE_OUTPUT, 1);
+
+    return output;
+}
+
+
 //// Interface functions
 
 void governorUpdate(void)
@@ -865,6 +949,8 @@ void governorUpdateGains(void)
     govKi           = (float)governorConfig()->gov_i_gain / 10.0f;
     govKd           = (float)governorConfig()->gov_d_gain / 1000.0f;
     govKf           = (float)governorConfig()->gov_f_gain / 100.0f;
+    govKt           = (float)governorConfig()->gov_tta_gain / 100.0f;
+    govTTALimit     = (float)governorConfig()->gov_tta_limit / 100.0f;
     govCycWeight    = (float)governorConfig()->gov_cyclic_ff_weight / 100.0f;
     govColWeight    = (float)governorConfig()->gov_collective_ff_weight / 100.0f;
 }
@@ -901,6 +987,20 @@ void governorInit(void)
                 govActiveCalc  = govMode1Control;
                 break;
             case GM_MODE2:
+                govStateUpdate = governorUpdateState;
+                govSpoolupInit = govPIDInit;
+                govSpoolupCalc = govPIDControl;
+                govActiveInit  = govMode2Init;
+                govActiveCalc  = govMode2Control;
+                break;
+            case GM_MODE3:
+                govStateUpdate = governorUpdateState;
+                govSpoolupInit = govPIDInit;
+                govSpoolupCalc = govPIDControl;
+                govActiveInit  = govMode3Init;
+                govActiveCalc  = govMode3Control;
+                break;
+            case GM_MODE4:
                 govStateUpdate = governorUpdateState;
                 govSpoolupInit = govPIDInit;
                 govSpoolupCalc = govPIDControl;
