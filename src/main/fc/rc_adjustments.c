@@ -120,6 +120,8 @@ static const adjustmentConfig_t adjustmentConfigs[ADJUSTMENT_FUNCTION_COUNT] =
     ADJ_CONFIG(GOV_F_GAIN,         GOV,   0, 500),
     ADJ_CONFIG(GOV_CYCLIC_FF,      GOV,   0, 500),
     ADJ_CONFIG(GOV_COLLECTIVE_FF,  GOV,   0, 500),
+    ADJ_CONFIG(GOV_TTA_GAIN,       GOV,   0, 200),
+    ADJ_CONFIG(GOV_TTA_LIMIT,      GOV,   0, 50),
 
     ADJ_CONFIG(OSD_PROFILE,        NONE,  1,  3),
     ADJ_CONFIG(LED_PROFILE,        NONE,  0,  2),
@@ -240,6 +242,12 @@ static int getAdjustmentValue(uint8_t adjFunc)
         break;
     case ADJUSTMENT_GOV_COLLECTIVE_FF:
         value = governorConfig()->gov_collective_ff_weight;
+        break;
+    case ADJUSTMENT_GOV_TTA_GAIN:
+        value = governorConfig()->gov_tta_gain;
+        break;
+    case ADJUSTMENT_GOV_TTA_LIMIT:
+        value = governorConfig()->gov_tta_gain;
         break;
     case ADJUSTMENT_RATE_PROFILE:
         value = getCurrentControlRateProfileIndex();
@@ -372,6 +380,12 @@ static void setAdjustmentValue(uint8_t adjFunc, int value)
         break;
     case ADJUSTMENT_GOV_COLLECTIVE_FF:
         governorConfigMutable()->gov_collective_ff_weight = value;
+        break;
+    case ADJUSTMENT_GOV_TTA_GAIN:
+        governorConfigMutable()->gov_tta_gain = value;
+        break;
+    case ADJUSTMENT_GOV_TTA_LIMIT:
+        governorConfigMutable()->gov_tta_limit = value;
         break;
     case ADJUSTMENT_RATE_PROFILE:
         changeControlRateProfile(value);
