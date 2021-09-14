@@ -122,6 +122,8 @@ void resetPidProfile(pidProfile_t *pidProfile)
         .cyclic_normalization = NORM_ABSOLUTE,
         .collective_normalization = NORM_NATURAL,
         .rescue_collective = 0,
+        .rescue_delay = 35,
+        .rescue_boost = 0,
     );
 }
 
