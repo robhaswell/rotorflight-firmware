@@ -43,8 +43,6 @@
 #include "leveling.h"
 
 
-#define RESCUE_BOOST_REPETITION_DELAY 5000
-
 static FAST_RAM_ZERO_INIT float levelGain;
 static FAST_RAM_ZERO_INIT float levelAngleLimit;
 
@@ -59,7 +57,7 @@ static FAST_RAM_ZERO_INIT float rescueCollective;
 static FAST_RAM_ZERO_INIT float rescueBoost;
 static FAST_RAM_ZERO_INIT uint16_t rescueDelay;
 
-static FAST_RAM_ZERO_INIT timeMs_t rescueTimer;
+static FAST_RAM_ZERO_INIT timeMs_t rescueStart;
 static FAST_RAM_ZERO_INIT bool rescueInverted;
 
 
@@ -79,20 +77,20 @@ void pidLevelInit(const pidProfile_t *pidProfile)
     rescueDelay = pidProfile->rescue_delay * 100;
 }
 
-float pidRescueCollective(void)
+FAST_CODE void pidRescueUpdate(void)
+{
+    if (FLIGHT_MODE(RESCUE_MODE)) {
+        rescueInverted = cmp32(millis(), rescueStart) < rescueDelay;
+    }
+    else {
+        rescueStart = millis();
+        rescueInverted = false;
+    }
+}
+
+FAST_CODE float pidRescueCollective(void)
 {
     float collective = rescueCollective;
-
-    timeMs_t delay = cmp32(millis(), rescueTimer);
-
-    // Allow another boost once repetition delay expired
-    if (delay > RESCUE_BOOST_REPETITION_DELAY) {
-        rescueTimer = millis();
-        delay = 0;
-    }
-
-    // Rescue while inverted
-    rescueInverted = (delay < rescueDelay);
 
     // Initial rescue with boost
     if (rescueInverted)

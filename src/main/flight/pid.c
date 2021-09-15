@@ -729,6 +729,9 @@ FAST_CODE void pidController(const pidProfile_t *pidProfile, timeUs_t currentTim
     rotateAxisError();
 #endif
 
+    // Update rescue mode state
+    pidRescueUpdate();
+
     // Apply PID for each axis
     pidApplyAxis(pidProfile, FD_ROLL);
     pidApplyAxis(pidProfile, FD_PITCH);
