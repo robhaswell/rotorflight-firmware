@@ -611,6 +611,9 @@ static FAST_CODE void pidApplyYawPrecomp(void)
     // Calculate total precompensation
     float tailPrecomp = (tailCollectiveFF + tailCollectiveImpulseFF + tailCyclicFF + tailCenterOffset) * Kc;
 
+    // Mopatop's dirty hack!
+    pidData[FD_YAW].F = tailPrecomp;
+
     // Add to YAW PID sum
     pidData[FD_YAW].Sum += tailPrecomp;
 }
